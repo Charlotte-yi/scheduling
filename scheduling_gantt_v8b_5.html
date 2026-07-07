@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scheduling Gantt — v8</title>
+<style>
+:root{
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --text:#1a1a1a;--text2:#444;--muted:#888;--accent:#2563eb;--warn-text:#92400e;
+  --border:#e2e2e2;--border2:#b8b8b8;--border-accent:#2563eb;
+  --s1:#f5f5f5;--s2:#ffffff;
+  --bg-accent:#eaf1ff;--bg-warn:#fff4d6;
+  --r:6px;
+  --green:#639922;--blue:#378ADD;--orange:#BA7517;--red:#E24B4A;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);font-size:13px;color:var(--text);background:#ebebeb;padding:24px}
+.wrap{max-width:1280px;margin:0 auto}
+
+/* top bar */
+.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px}
+.page-title{font-size:18px;font-weight:600}
+.role-switcher{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+.role-pill{display:flex;background:var(--s2);border:1px solid var(--border);border-radius:20px;overflow:hidden}
+.role-opt{padding:5px 14px;cursor:pointer;font-size:12px;color:var(--muted);transition:all .15s}
+.role-opt.on{background:var(--accent);color:#fff;font-weight:500}
+
+/* tabs */
+.tabs{display:flex;border-bottom:1px solid var(--border);margin-bottom:14px}
+.tab{font-size:13px;padding:8px 18px;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .15s}
+.tab:hover{color:var(--text)}
+.tab.on{color:var(--accent);border-bottom-color:var(--border-accent);font-weight:500}
+
+/* toolbar */
+.toolbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.tl{font-size:12px;color:var(--muted)}
+.fg{display:flex;gap:5px}
+.fb{font-size:12px;padding:4px 11px;border-radius:var(--r);border:1px solid var(--border);background:var(--s2);color:var(--text2);cursor:pointer}
+.fb:hover{background:var(--s1)}
+.fb.on{background:var(--bg-accent);border-color:var(--border-accent);color:var(--accent)}
+.legend{display:flex;gap:10px;margin-left:auto;align-items:center;flex-wrap:wrap}
+.li{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text2)}
+.ls{width:20px;height:8px;border-radius:3px}
+
+/* unassigned banner */
+.ua-bar{display:flex;align-items:center;gap:8px;font-size:12px;padding:7px 14px;background:var(--bg-warn);border-radius:8px;margin-bottom:10px;color:var(--warn-text);cursor:pointer;border:1px solid #e8b85c}
+.ua-bar:hover{background:#ffecb5}
+
+/* card */
+.card{border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--s2);box-shadow:0 1px 4px rgba(0,0,0,.07)}
+.gantt-layout{display:flex}
+.sidebar{width:200px;min-width:200px;border-right:1px solid var(--border)}
+.sb-hd{padding:8px 12px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);background:var(--s1)}
+.sb-item{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border)}
+.sb-item:hover{background:var(--s1)}
+.sb-item.on{background:var(--bg-accent)}
+.sb-name{font-size:12px;font-weight:500}
+.sb-item.on .sb-name{color:var(--accent)}
+.sb-count{font-size:11px;padding:1px 7px;border-radius:10px;background:var(--s1);color:var(--muted)}
+.sb-item.on .sb-count{background:var(--bg-accent);color:var(--accent)}
+.scroll{overflow-x:auto;flex:1}
+.inner{min-width:1020px}
+
+/* gantt header */
+.gh{display:flex;border-bottom:1px solid var(--border);background:var(--s1)}
+.lc{width:265px;min-width:265px;padding:8px 12px;font-size:11px;font-weight:500;color:var(--muted);border-right:1px solid var(--border)}
+.th{flex:1;display:flex}
+.wc{flex:1;padding:7px 0;text-align:center;font-size:11px;color:var(--muted);border-right:1px solid var(--border)}
+.wc:last-child{border-right:none}
+.wc.today{background:var(--bg-accent)}
+.wc.today span{color:var(--accent);font-weight:600}
+
+/* project row */
+.pr-row{display:flex;background:#efefef;border-bottom:1px solid var(--border2)}
+.pr-lc{width:265px;min-width:265px;padding:8px 12px;border-right:1px solid var(--border);display:flex;align-items:center;gap:6px;cursor:pointer}
+.pr-lc:hover{background:#e8e8e8}
+.pr-tog{font-size:10px;color:var(--muted);transition:transform .15s}
+.pr-tog.open{transform:rotate(90deg)}
+.pr-name{font-size:12px;font-weight:700}
+.pr-tc{flex:1;position:relative;height:30px;background:#efefef}
+
+/* job row */
+.jr-row{display:flex;background:#f7f7f7;border-bottom:1px solid var(--border)}
+.jr-lc{width:265px;min-width:265px;padding:8px 12px 8px 22px;border-right:1px solid var(--border);display:flex;align-items:center;gap:6px;cursor:pointer}
+.jr-lc:hover{background:#f0f0f0}
+.jr-tog{font-size:10px;color:var(--muted);transition:transform .15s}
+.jr-tog.open{transform:rotate(90deg)}
+.jr-name{font-size:12px;font-weight:600}
+.jr-tc{flex:1;position:relative;height:34px}
+.ms-track{position:absolute;height:2px;background:var(--border2);top:50%;margin-top:-1px;opacity:.5}
+.ms-mini{position:absolute;width:10px;height:10px;transform:rotate(45deg);top:50%;margin-top:-5px;z-index:2;border-radius:1px;cursor:pointer}
+.jr-status{position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--muted)}
+.jr-status b{color:var(--text)}
+
+/* milestone row */
+.ms-row{display:flex;border-bottom:1px solid var(--border)}
+.ms-lc{width:265px;min-width:265px;padding:5px 12px 5px 22px;border-right:1px solid var(--border);display:flex;align-items:center;gap:5px}
+.ms-dot{width:7px;height:7px;border-radius:50%;flex:none}
+.ms-name-t{font-size:11px;font-weight:600}
+.ms-dates{font-size:10px;color:var(--muted);margin-left:4px}
+.ms-dates .ok{color:var(--green);font-weight:500}
+.ms-dates .late{color:var(--red);font-weight:500}
+.ms-tc{flex:1;position:relative;height:26px}
+.ms-bg{position:absolute;top:0;bottom:0;background:var(--s1)}
+.ms-dia{position:absolute;width:12px;height:12px;transform:rotate(45deg);top:50%;margin-top:-6px;border:2px solid var(--s2);z-index:3;border-radius:2px;cursor:pointer}
+.ms-alert{position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--red);z-index:4;white-space:nowrap;background:rgba(255,255,255,.92);padding:1px 5px;border-radius:4px}
+
+/* task row */
+.tk-row{display:flex;border-bottom:1px solid var(--border)}
+.tk-row:last-child{border-bottom:none}
+.tk-lc{width:265px;min-width:265px;padding:5px 12px 5px 38px;border-right:1px solid var(--border);display:flex;flex-direction:column;gap:3px;background:var(--s2);position:relative;z-index:1}
+.tk-lc.mywork{padding-left:16px}
+.tk-name{font-size:11px;color:var(--text2)}
+.tk-ctx{font-size:10px;color:var(--muted)}
+.chips{display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-top:1px}
+.chip{font-size:10px;padding:1px 7px;border-radius:8px;border:1px solid var(--border);background:var(--s1);color:var(--muted);white-space:nowrap}
+.chip.ua{background:var(--bg-warn);border-color:#e8b85c;border-style:dashed;color:var(--warn-text)}
+.chip.active{background:var(--bg-accent);border-color:var(--border-accent);color:var(--accent)}
+.chip.done{background:#f0fae8;border-color:#8bc34a;color:var(--green)}
+.chip.created{background:#fff3e0;border-color:#e8b85c;color:#92400e}
+.chip.notcreated{background:var(--s1);border-color:#ddd;color:#aaa;border-style:dashed}
+
+/* bar area */
+.ba{flex:1;position:relative;height:34px}
+.tl-now{position:absolute;width:1.5px;top:0;bottom:0;z-index:5;pointer-events:none;background:var(--border-accent);opacity:.8}
+.b-plan-faint{height:10px;border-radius:3px;border:1.5px dashed #ddd;background:transparent;position:absolute;top:50%;margin-top:-5px;z-index:1}
+.b-plan{height:10px;border-radius:3px;border:1.5px dashed #999;background:transparent;position:absolute;top:50%;margin-top:-5px;z-index:2}
+.b-act{height:10px;border-radius:3px;position:absolute;top:50%;margin-top:-5px;z-index:3}
+.b-ghost{height:10px;border-radius:3px;position:absolute;top:50%;margin-top:-5px;z-index:2;opacity:.22}
+.due-v{position:absolute;width:2px;top:5px;height:24px;border-radius:1px;z-index:4}
+.row-bg{position:absolute;top:0;bottom:0;background:var(--s1);z-index:0}
+
+/* summary panel */
+.summary-panel{display:none}
+.summary-panel.on{display:block}
+.stat-row{display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.stat-card{background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:14px 18px;flex:1;min-width:110px}
+.stat-label{font-size:11px;color:var(--muted);margin-bottom:4px}
+.stat-val{font-size:24px;font-weight:700}
+.sum-section{background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:12px}
+.sum-section h3{font-size:13px;font-weight:600;margin-bottom:10px}
+.risk-item{display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-radius:8px;background:var(--bg-warn);margin-bottom:6px;cursor:pointer;font-size:12px;border:1px solid transparent}
+.risk-item:hover{border-color:#e8b85c}
+.risk-item-left{display:flex;flex-direction:column;gap:2px}
+.risk-ctx{font-size:10px;color:var(--muted)}
+.rb{font-size:10px;padding:2px 8px;border-radius:8px}
+.rb-ar{background:#fff3e0;color:var(--orange)}
+.rb-od{background:#fde8e8;color:var(--red)}
+.a-row{display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border)}
+.a-row:last-child{border-bottom:none}
+.a-name{font-size:12px;font-weight:500}
+.a-dots{display:flex;gap:3px}
+.a-dot{width:8px;height:8px;border-radius:50%}
+.proj-bar-wrap{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.proj-bar-name{font-size:12px;font-weight:500;width:80px}
+.proj-bar-track{flex:1;height:8px;background:var(--s1);border-radius:4px;overflow:hidden}
+.proj-bar-fill{height:100%;border-radius:4px;background:var(--blue)}
+.proj-bar-meta{font-size:11px;color:var(--muted);width:200px;text-align:right}
+
+/* my work panel */
+.mywork-panel{display:none}
+.mywork-panel.on{display:block}
+.mw-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.mw-title{font-size:15px;font-weight:600}
+.mw-sub{font-size:12px;color:var(--muted)}
+
+/* config tab */
+.cfg-jt{font-size:13px;padding:7px 18px;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px;line-height:1.4}
+.cfg-jt:hover{color:var(--text)}
+.cfg-jt.on{color:var(--accent);border-bottom-color:var(--border-accent);font-weight:500}
+.cfg-jt.on div:last-child{color:var(--accent);opacity:.7}
+.cfg-card{background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:12px}
+.cfg-card h3{font-size:13px;font-weight:600;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.cfg-grid{display:flex;gap:20px;flex-wrap:wrap}
+.cfg-col{flex:1;min-width:280px}
+.cfg-col h4{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px}
+.ms-cfg-row{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-radius:8px;background:var(--s1);margin-bottom:6px;gap:12px}
+.ms-cfg-name{font-size:12px;font-weight:500;flex:none}
+.ms-cfg-arrow{font-size:11px;color:var(--muted);flex:none}
+.cfg-dropdown{font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--s2);color:var(--text2);cursor:default;display:flex;align-items:center;gap:5px;position:relative}
+.cfg-dropdown .dd-val{font-weight:500;color:var(--text)}
+.cfg-dropdown .dd-arr{color:var(--muted);font-size:10px;margin-left:4px}
+.cfg-dropdown-readonly::after{content:'Read-only';font-size:9px;color:var(--muted);margin-left:6px;padding:1px 4px;background:var(--s1);border-radius:4px}
+.task-cfg-block{border:1px solid var(--border);border-radius:8px;margin-bottom:8px;overflow:hidden}
+.task-cfg-header{padding:8px 12px;background:var(--s1);font-size:12px;font-weight:500;border-bottom:1px solid var(--border)}
+.task-cfg-body{padding:10px 12px;display:flex;flex-direction:column;gap:7px}
+.task-cfg-row{display:flex;align-items:center;gap:8px}
+.task-cfg-label{font-size:11px;color:var(--muted);width:80px;flex:none}
+.cfg-pill{font-size:11px;padding:2px 8px;border-radius:6px;background:var(--bg-accent);color:var(--accent);border:1px solid #c7d7ff}
+.cfg-pill.prev{background:#f1eaff;color:#6b3fa0;border-color:#d5b8ff}
+.cfg-pill.auto{background:#f0fae8;color:var(--green);border-color:#c5e8a0}
+.cfg-pill.warn{background:var(--bg-warn);color:var(--warn-text);border-color:#e8b85c}
+
+.tooltip{position:fixed;background:#1a1a1a;color:#f0f0f0;border-radius:9px;padding:10px 13px;font-size:12px;pointer-events:none;z-index:9999;max-width:280px;box-shadow:0 6px 20px rgba(0,0,0,.25);line-height:1.55}
+.ttt{font-weight:600;margin-bottom:4px;color:#fff}
+.ttr{display:flex;justify-content:space-between;gap:14px;font-size:11px;color:#aaa;margin-top:2px}
+.ttv{color:#fff}
+.ttn{font-size:10px;color:#f8b860;margin-top:5px;padding-top:5px;border-top:1px solid rgba(255,255,255,.12)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="topbar">
+  <div class="page-title">Scheduling</div>
+  <div class="role-switcher">
+    <span>Viewing as:</span>
+    <div class="role-pill">
+      <div class="role-opt on" id="role-sup">Supervisor</div>
+      <div class="role-opt" id="role-eng">Engineer (Assignee A)</div>
+    </div>
+  </div>
+</div>
+
+<div class="tabs" id="tabs"></div>
+
+<!-- SUMMARY -->
+<div class="summary-panel" id="panel-summary">
+  <div class="stat-row">
+    <div class="stat-card"><div class="stat-label">Active tasks</div><div class="stat-val" style="color:var(--blue)">14</div></div>
+    <div class="stat-card"><div class="stat-label">At-risk</div><div class="stat-val" style="color:var(--orange)">3</div></div>
+    <div class="stat-card"><div class="stat-label">Overdue</div><div class="stat-val" style="color:var(--red)">2</div></div>
+    <div class="stat-card"><div class="stat-label">Unassigned</div><div class="stat-val" style="color:var(--warn-text)">4</div></div>
+    <div class="stat-card"><div class="stat-label">Completed this week</div><div class="stat-val" style="color:var(--green)">5</div></div>
+  </div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <div class="sum-section" style="flex:1;min-width:260px">
+      <h3>By Project</h3>
+      <div class="proj-bar-wrap"><div class="proj-bar-name">Project 1</div><div class="proj-bar-track"><div class="proj-bar-fill" style="width:70%"></div></div><div class="proj-bar-meta">9 active · <span style="color:var(--orange)">2 at-risk</span></div></div>
+      <div class="proj-bar-wrap"><div class="proj-bar-name">Project 2</div><div class="proj-bar-track"><div class="proj-bar-fill" style="width:40%"></div></div><div class="proj-bar-meta">5 active · <span style="color:var(--red)">2 overdue</span></div></div>
+    </div>
+    <div class="sum-section" style="flex:1;min-width:240px">
+      <h3>Most due this week</h3>
+      <div class="a-row"><div class="a-name">Assignee A</div><div class="a-dots"><div class="a-dot" style="background:var(--red)"></div><div class="a-dot" style="background:var(--blue)"></div><div class="a-dot" style="background:var(--blue)"></div></div><div style="font-size:11px;color:var(--muted)">3 due</div></div>
+      <div class="a-row"><div class="a-name">Assignee C</div><div class="a-dots"><div class="a-dot" style="background:var(--orange)"></div><div class="a-dot" style="background:var(--blue)"></div></div><div style="font-size:11px;color:var(--muted)">2 due</div></div>
+      <div class="a-row"><div class="a-name">Assignee D</div><div class="a-dots"><div class="a-dot" style="background:var(--blue)"></div></div><div style="font-size:11px;color:var(--muted)">1 due</div></div>
+    </div>
+    <div class="sum-section" style="flex:2;min-width:300px">
+      <h3>At-risk & overdue — click to jump</h3>
+      <div class="risk-item" data-task="t8"><div class="risk-item-left"><span style="font-weight:500">Agency follow-up</span><span class="risk-ctx">Project 1 · Job 2 · M2 · Approval</span></div><span class="rb rb-od">Overdue</span></div>
+      <div class="risk-item" data-task="t19"><div class="risk-item-left"><span style="font-weight:500">Vendor selection</span><span class="risk-ctx">Project 2 · Job 5 · M1 · Order</span></div><span class="rb rb-od">Overdue</span></div>
+      <div class="risk-item" data-task="t15"><div class="risk-item-left"><span style="font-weight:500">60% design review</span><span class="risk-ctx">Project 2 · Job 4 · M2 · 60% Design</span></div><span class="rb rb-ar">At-risk</span></div>
+      <div class="risk-item" data-task="t9"><div class="risk-item-left"><span style="font-weight:500">Damage assessment</span><span class="risk-ctx">Project 1 · Job 3 · M1 · Repair</span></div><span class="rb" style="background:#fde8e8;color:#E24B4A">Missing date</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- GANTT (by job + by assignee share this) -->
+<div class="summary-panel" id="panel-gantt">
+  <div class="toolbar">
+    <span class="tl">View by</span>
+    <div class="fg">
+      <button class="fb on" id="mode-job">By job</button>
+      <button class="fb" id="mode-asgn">By assignee</button>
+    </div>
+    <div class="fg" style="margin-left:8px">
+      <button class="fb on">Week</button>
+      <button class="fb">Month</button>
+    </div>
+    <div class="legend">
+      <div class="li"><div class="ls" style="border:1.5px dashed #ddd;background:transparent"></div>Planned (not created)</div>
+      <div class="li"><div class="ls" style="border:1.5px dashed #999;background:transparent"></div>Created, not started</div>
+      <div class="li"><div class="ls" style="background:var(--blue)"></div>In progress</div>
+      <div class="li"><div class="ls" style="background:var(--green)"></div>Done</div>
+      <div class="li"><div class="ls" style="background:var(--orange)"></div>At-risk</div>
+      <div class="li"><div class="ls" style="background:var(--red)"></div>Overdue</div>
+      <div class="li"><span style="font-size:11px;color:#E24B4A">⚠</span>Missing date field</div>
+    </div>
+  </div>
+  <div class="ua-bar" id="ua">⚠ <span id="ual"><b>4 unassigned tasks</b> across 2 jobs · click to filter</span></div>
+  <div class="card">
+    <div class="gantt-layout">
+      <div class="sidebar" id="sidebar" style="display:none">
+        <div class="sb-hd">Assignees (active tasks)</div>
+        <div id="sb-list"></div>
+      </div>
+      <div class="scroll"><div class="inner" id="gantt"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- MY WORK -->
+<div class="mywork-panel" id="panel-mywork">
+  <div class="mw-header">
+    <div><div class="mw-title">My Work</div><div class="mw-sub">All tasks assigned to you</div></div>
+  </div>
+  <div class="card">
+    <div class="scroll"><div class="inner" id="mywork-gantt"></div></div>
+  </div>
+</div>
+
+<!-- CONFIG PREVIEW -->
+<div class="summary-panel" id="panel-config">
+  <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#f0f4ff;border:1px solid #c7d7ff;border-radius:8px;margin-bottom:16px;font-size:12px;color:#2563eb">
+    <span style="font-size:16px">ℹ</span>
+    <span>This configuration lives <b>outside the scheduler</b> — it is shown here for reference only, to explain how task dates are derived from job date fields. Dropdowns are read-only in this preview.</span>
+  </div>
+
+  <div style="margin-bottom:12px">
+    <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Project</div>
+    <div style="font-size:14px;font-weight:600">Project 1 — Transmission Line Inspection</div>
+    <div style="font-size:11px;color:var(--muted);margin-top:4px">3 job types configured · each tab below corresponds to one job type used in this project</div>
+  </div>
+
+  <div id="config-job-tabs" style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:16px">
+    <div class="cfg-jt on" data-jtype="inspection">
+      <div>Standard Inspection</div>
+      <div style="font-size:10px;color:var(--muted);font-weight:400">Job 1</div>
+    </div>
+    <div class="cfg-jt" data-jtype="permit">
+      <div>Permit</div>
+      <div style="font-size:10px;color:var(--muted);font-weight:400">Job 2</div>
+    </div>
+    <div class="cfg-jt" data-jtype="repair">
+      <div>Emergency Repair</div>
+      <div style="font-size:10px;color:var(--muted);font-weight:400">Job 3</div>
+    </div>
+  </div>
+
+  <div id="config-content"></div>
+</div>
+
+<div id="tt" class="tooltip" style="display:none"></div>
+
+<script>
+const WKS=[
+  {l:'Jun 2'},{l:'Jun 9'},{l:'Jun 16'},{l:'Jun 23'},
+  {l:'Jun 30',today:true},{l:'Jul 7'},{l:'Jul 14'},{l:'Jul 21'},
+  {l:'Jul 28'},{l:'Aug 4'},{l:'Aug 11'},{l:'Aug 18'}
+];
+const TC=4,TW=12;
+const P=c=>(c/TW*100).toFixed(3)+'%';
+const W=c=>(c/TW*100).toFixed(3)+'%';
+const SC={done:'#639922',inprogress:'#378ADD',atrisk:'#BA7517',overdue:'#E24B4A',late:'#E24B4A'};
+
+// Task date logic:
+// - start = job date field (e.g. creation_date, construction_date, or prev task completion timestamp)
+// - due = job date field (e.g. construction_date, inspection_date)
+// - sequential: task N+1 start = task N completion timestamp
+// - shared due: multiple tasks share same due date field, but start sequentially
+// state: 'notcreated' | 'created' | 'active' | 'done'
+// missing: null | 'start' | 'due' | 'both' | 'start_field'
+
+const PROJECTS=[
+
+  // ─────────────────────────────────────────────
+  // PROJECT 1: Transmission Line Inspection
+  // ─────────────────────────────────────────────
+  {id:'p1',name:'Project 1 — Transmission Line Inspection',jobs:[
+
+    // JOB 1 — Standard Inspection
+    // Date fields: creation_date=Jun2, construction_date=Jun16, inspection_date=Jul7, close_date=Jul28
+    // M1 due=construction_date. Task1+2 share due date, sequential start.
+    // M2 due=inspection_date. Task3+4 share due date, sequential start.
+    // M3 due=close_date. Task5 single task.
+    {id:'j1',name:'Job 1 — Standard Inspection',jstatus:'Inspection',
+     dateFields:'creation: Jun 2 · construction: Jun 16 · inspection: Jul 7 · close: Jul 28',
+     milestones:[
+      {id:'m1',label:'M1 · Construction',col:2,ss:0,pd:'Jun 16',ad:'Jun 14',sr:true,even:true,tasks:[
+        // Task 1: start=creation_date(Jun2), due=construction_date(Jun16) → done
+        {id:'t1',name:'Site preparation',as:'Assignee A',state:'done',st:'done',
+         plan:{s:0,e:2},actual:{s:0,e:1.8},due:2,
+         tt:'Done|Start: creation_date (Jun 2)|Due: construction_date (Jun 16)|Actual completion: Jun 14|Completed on time'},
+        // Task 2: start=Task1 completion timestamp(Jun14), due=construction_date(Jun16) → done
+        // shared due date, sequential start
+        {id:'t2',name:'Equipment check',as:'Assignee B',state:'done',st:'done',
+         plan:{s:1.8,e:2},actual:{s:1.8,e:2},due:2,
+         tt:'Done|Start: Task 1 completion timestamp (Jun 14)|Due: construction_date (Jun 16)|Shared due date with Task 1 — sequential start|Completed on time'}
+      ]},
+      {id:'m2',label:'M2 · Inspection',col:5,ss:2,pd:'Jul 7',ad:null,sr:true,even:false,tasks:[
+        // Task 3: start=construction_date(Jun16), due=inspection_date(Jul7) → active
+        {id:'t3',name:'Field inspection',as:'Assignee A',state:'active',st:'inprogress',
+         plan:{s:2,e:5},actual:{s:2.2,e:null},due:5,
+         tt:'In progress|Start: construction_date (Jun 16)|Due: inspection_date (Jul 7)|Started: Jun 17'},
+        // Task 4: start=Task3 completion timestamp (unknown, future), due=inspection_date(Jul7)
+        // created, waiting for Task 3
+        {id:'t4',name:'Inspection sign-off',as:'Assignee A',state:'created',st:null,
+         plan:{s:4,e:5},actual:null,due:5,
+         tt:'Created — not started|Start: Task 3 completion timestamp (pending)|Due: inspection_date (Jul 7)|Shared due date with Task 3 — sequential start|Waiting for Task 3 to complete'}
+      ]},
+      {id:'m3',label:'M3 · Close',col:9,ss:5,pd:'Jul 28',ad:null,sr:false,even:true,tasks:[
+        // Task 5: start=inspection_date(Jul7), due=close_date(Jul28) → not created
+        {id:'t5',name:'Documentation',as:'Assignee A',state:'notcreated',
+         plan:{s:5,e:9},actual:null,due:9,
+         tt:'Not yet created|Start: inspection_date (Jul 7)|Due: close_date (Jul 28)|Will be created when M2 tasks complete'}
+      ]}
+    ]},
+
+    // JOB 2 — Permit Job
+    // Date fields: creation_date=Jun9, submission_date=Jun23, approval_date=Jul14
+    // Fewer date fields, simpler structure
+    {id:'j2',name:'Job 2 — Permit',jstatus:'Approval Pending',
+     dateFields:'creation: Jun 9 · submission: Jun 23 · approval: Jul 14',
+     milestones:[
+      {id:'m4',label:'M1 · Submission',col:3,ss:0,pd:'Jun 23',ad:'Jun 21',sr:true,even:true,tasks:[
+        // Task 1: start=creation_date(Jun9), due=submission_date(Jun23) → done
+        {id:'t6',name:'Prepare permit package',as:'Assignee C',state:'done',st:'done',
+         plan:{s:1,e:3},actual:{s:1,e:2.8},due:3,
+         tt:'Done|Start: creation_date (Jun 9)|Due: submission_date (Jun 23)|Actual completion: Jun 21|Completed on time'},
+        // Task 2: start=Task1 completion(Jun21), due=submission_date(Jun23) → done
+        {id:'t7',name:'Internal review',as:'Assignee B',state:'done',st:'done',
+         plan:{s:2.8,e:3},actual:{s:2.8,e:3},due:3,
+         tt:'Done|Start: Task 1 completion timestamp (Jun 21)|Due: submission_date (Jun 23)|Shared due date — sequential start|Completed on time'}
+      ]},
+      {id:'m5',label:'M2 · Approval',col:6,ss:3,pd:'Jul 14',ad:null,sr:false,even:false,
+       alert:'Milestone date approaching — awaiting agency approval',
+       tasks:[
+        // Task 3: start=submission_date(Jun23), due=approval_date(Jul14) → active, overdue
+        {id:'t8',name:'Agency follow-up',as:'Assignee C',state:'active',st:'overdue',
+         plan:{s:3,e:6},actual:{s:3.2,e:null},due:5,
+         tt:'In progress — OVERDUE|Start: submission_date (Jun 23)|Due: approval_date (Jun 30)|Past due date|Single task in this milestone'}
+      ]}
+    ]},
+
+    // JOB 3 — Emergency Repair (missing date field scenario)
+    // Date fields: creation_date=Jun16, repair_date=EMPTY, close_date=Jul21
+    {id:'j3',name:'Job 3 — Emergency Repair',jstatus:'In Progress',
+     dateFields:'creation: Jun 16 · repair_date: ⚠ not set · close: Jul 21',
+     milestones:[
+      {id:'m6',label:'M1 · Repair',col:5.5,ss:0,pd:'(repair_date — not set)',ad:null,sr:false,even:true,
+       alert:'repair_date field is empty — milestone due date not configured',
+       tasks:[
+        // Task 1: start=creation_date(Jun16), due=repair_date → missing due
+        {id:'t9',name:'Damage assessment',as:'Assignee D',state:'active',st:null,
+         plan:{s:2,e:null},actual:{s:2.2,e:null},due:null,missing:'due',
+         tt:'In progress|Start: creation_date (Jun 16)|Due: repair_date ⚠ field is empty|At-risk / overdue calculation skipped'},
+        // Task 2: start=Task1 completion timestamp (unknown), due=repair_date → both missing
+        {id:'t10',name:'Repair execution',as:'Assignee D',state:'created',st:null,
+         plan:null,actual:null,due:null,missing:'both',
+         tt:'Created — not started|Start: Task 1 completion timestamp (pending)|Due: repair_date ⚠ field is empty|Cannot display on timeline'}
+      ]},
+      {id:'m7',label:'M2 · Close',col:9,ss:5.5,pd:'Jul 21',ad:null,sr:false,even:false,tasks:[
+        // Task 3: start=repair_date(missing) → start missing, due=close_date(Jul21)
+        {id:'t11',name:'Final inspection',as:null,state:'notcreated',
+         plan:null,actual:null,due:9,missing:'start',
+         tt:'Not yet created|Start: repair_date ⚠ field is empty — start date unknown|Due: close_date (Jul 21)|Unassigned'}
+      ]}
+    ]}
+  ]},
+
+  // ─────────────────────────────────────────────
+  // PROJECT 2: Substation Upgrade
+  // ─────────────────────────────────────────────
+  {id:'p2',name:'Project 2 — Substation Upgrade',jobs:[
+
+    // JOB 4 — Design Review
+    // Date fields: creation_date=Jun2, design_30=Jun23, design_60=Jul14, design_90=Aug4
+    // 4 date fields, 3 milestones, tasks sequential within each milestone
+    {id:'j4',name:'Job 4 — Design Review',jstatus:'60% Design',
+     dateFields:'creation: Jun 2 · 30% design: Jun 23 · 60% design: Jul 14 · 90% design: Aug 4',
+     milestones:[
+      {id:'m8',label:'M1 · 30% Design',col:3,ss:0,pd:'Jun 23',ad:'Jun 22',sr:true,even:true,tasks:[
+        // Task 1: start=creation_date(Jun2), due=design_30(Jun23) → done
+        {id:'t12',name:'Preliminary design',as:'Assignee A',state:'done',st:'done',
+         plan:{s:0,e:2.5},actual:{s:0,e:2.3},due:2.5,
+         tt:'Done|Start: creation_date (Jun 2)|Due: design_30_date (Jun 23)|Actual: Jun 20|Completed on time'},
+        // Task 2: start=Task1 completion(Jun20), due=design_30(Jun23) → done
+        {id:'t13',name:'30% design review',as:'Assignee E',state:'done',st:'done',
+         plan:{s:2.3,e:3},actual:{s:2.3,e:3},due:3,
+         tt:'Done|Start: Task 1 completion timestamp (Jun 20)|Due: design_30_date (Jun 23)|Shared due date — sequential start|Completed on time'}
+      ]},
+      {id:'m9',label:'M2 · 60% Design',col:6,ss:3,pd:'Jul 14',ad:null,sr:true,even:false,tasks:[
+        // Task 3: start=design_30(Jun23), due=design_60(Jul14) → active
+        {id:'t14',name:'Detailed design',as:'Assignee A',state:'active',st:'inprogress',
+         plan:{s:3,e:5.5},actual:{s:3.1,e:null},due:5.5,
+         tt:'In progress|Start: design_30_date (Jun 23)|Due: design_60_date (Jul 14)|Started: Jun 24'},
+        // Task 4: start=Task3 completion(future), due=design_60(Jul14) → created, at-risk
+        {id:'t15',name:'60% design review',as:'Assignee E',state:'created',st:'atrisk',
+         plan:{s:4.5,e:6},actual:null,due:6,
+         tt:'Created — not started|Start: Task 3 completion timestamp (pending)|Due: design_60_date (Jul 14)|Shared due date — sequential start|At-risk: Task 3 running behind'}
+      ]},
+      {id:'m10',label:'M3 · 90% Design',col:10,ss:6,pd:'Aug 4',ad:null,sr:false,even:true,tasks:[
+        // Task 5: start=design_60(Jul14), due=design_90(Aug4) → not created
+        {id:'t16',name:'Final design',as:'Assignee A',state:'notcreated',
+         plan:{s:6,e:9},actual:null,due:9,
+         tt:'Not yet created|Start: design_60_date (Jul 14)|Due: design_90_date (Aug 4)|Will be created when M2 tasks complete'},
+        // Task 6: start=Task5 completion, due=design_90(Aug4) → not created
+        {id:'t17',name:'90% design review',as:null,state:'notcreated',
+         plan:{s:8.5,e:10},actual:null,due:10,
+         tt:'Not yet created|Start: Task 5 completion timestamp|Due: design_90_date (Aug 4)|Unassigned|Shared due date — sequential start'}
+      ]}
+    ]},
+
+    // JOB 5 — Equipment Procurement
+    // Date fields: creation_date=Jun9, order_date=Jun30, delivery_date=Jul28
+    {id:'j5',name:'Job 5 — Equipment Procurement',jstatus:'Order Placed',
+     dateFields:'creation: Jun 9 · order: Jun 30 · delivery: Jul 28',
+     milestones:[
+      {id:'m11',label:'M1 · Order',col:4,ss:0,pd:'Jun 30',ad:null,sr:true,even:true,tasks:[
+        // Task 1: start=creation_date(Jun9), due=order_date(Jun30) → done
+        {id:'t18',name:'Spec finalization',as:'Assignee C',state:'done',st:'done',
+         plan:{s:1,e:3.5},actual:{s:1,e:3.2},due:3.5,
+         tt:'Done|Start: creation_date (Jun 9)|Due: order_date (Jun 30)|Actual: Jun 28|Completed on time'},
+        // Task 2: start=Task1 completion(Jun28), due=order_date(Jun30) → active, overdue
+        {id:'t19',name:'Vendor selection',as:'Assignee C',state:'active',st:'overdue',
+         plan:{s:3.2,e:4},actual:{s:3.2,e:null},due:4,
+         tt:'In progress — OVERDUE|Start: Task 1 completion timestamp (Jun 28)|Due: order_date (Jun 30)|Shared due date — sequential start|Past due date'}
+      ]},
+      {id:'m12',label:'M2 · Delivery',col:9,ss:4,pd:'Jul 28',ad:null,sr:false,even:false,tasks:[
+        // Task 3: start=order_date(Jun30), due=delivery_date(Jul28) → created, waiting
+        {id:'t20',name:'Order tracking',as:'Assignee C',state:'created',st:null,
+         plan:{s:4,e:9},actual:null,due:9,
+         tt:'Created — not started|Start: order_date (Jun 30)|Due: delivery_date (Jul 28)|Waiting for Task 2 (Vendor selection) to complete'}
+      ]}
+    ]}
+  ]}
+];
+
+const allTasks=PROJECTS.flatMap(p=>p.jobs.flatMap(j=>j.milestones.flatMap(m=>m.tasks)));
+
+function msS(ms){
+  if(ms.sr&&ms.ad) return 'reached';
+  if(!ms.sr&&ms.col<=TC) return 'datedue';
+  if(ms.sr) return 'inreview';
+  if(ms.tasks.some(t=>t.st&&['atrisk','overdue','late'].includes(t.st))) return 'atrisk';
+  return 'upcoming';
+}
+function msC(s){return s==='reached'?'#639922':s==='inreview'?'#378ADD':s==='datedue'?'#E24B4A':s==='atrisk'?'#BA7517':'#bbb';}
+function msL(s){return s==='reached'?'Completed':s==='inreview'?'In review':s==='datedue'?'Date passed':s==='atrisk'?'At-risk':'Upcoming';}
+
+function stateChip(t){
+  if(t.state==='notcreated') return '<span class="chip notcreated">Not created</span>';
+  if(t.state==='created') return `<span class="chip created">${t.st==='atrisk'?'Created · At-risk':'Created'}</span>`;
+  if(t.state==='active') return `<span class="chip active">${t.st==='overdue'?'Active · Overdue':t.st==='atrisk'?'Active · At-risk':'Active'}</span>`;
+  if(t.state==='done') return '<span class="chip done">Done</span>';
+  return '';
+}
+
+function renderBarArea(t,ms,sfx){
+  let h=`<div class="ba" id="bar-${t.id}${sfx||''}">`;
+  if(ms.even) h+=`<div class="row-bg" style="left:${P(ms.ss)};width:${W(ms.col-ms.ss)}"></div>`;
+  h+=`<div class="tl-now" style="left:${P(TC+.5)}"></div>`;
+
+  // --- MISSING DATE CASES ---
+  if(t.missing==='both'){
+    // Case 4: both missing — no bar, no line, just empty (warning is on label)
+  } else if(t.missing==='start'){
+    // Case 2: start missing, due present — only due date line
+    h+=`<div class="due-v" style="left:${P(t.due)};background:#bbb"></div>`;
+  } else if(t.missing==='due'){
+    // Case 3: due missing, start present — start marker triangle only
+    h+=`<div style="position:absolute;left:${P(t.plan.s)};top:50%;margin-top:-6px;width:0;height:0;border-top:6px solid transparent;border-bottom:6px solid transparent;border-left:8px solid #bbb;z-index:3"></div>`;
+  } else if(t.missing==='start_field'){
+    // Case 5: active, start field empty but actual timestamp available — draw from actual
+    if(t.plan) h+=`<div class="b-plan" style="left:${P(t.plan.s)};width:${W(t.plan.e-t.plan.s)};border-color:#aaa;opacity:.4"></div>`;
+    const col=SC[t.st]||'#378ADD';
+    const end=t.actual.e!==null?t.actual.e:TC+.5;
+    h+=`<div class="b-act" style="left:${P(t.actual.s)};width:${W(end-t.actual.s)};background:${col};border-left:2px dashed rgba(255,255,255,.6)"></div>`;
+    const dc=t.st==='overdue'?'#E24B4A':t.st==='atrisk'?'#BA7517':'#bbb';
+    h+=`<div class="due-v" style="left:${P(t.due)};background:${dc}"></div>`;
+
+  // --- NORMAL CASES ---
+  } else if(t.state==='notcreated'){
+    h+=`<div class="b-plan-faint" style="left:${P(t.plan.s)};width:${W(t.plan.e-t.plan.s)}"></div>`;
+    h+=`<div class="due-v" style="left:${P(t.due)};background:#ddd"></div>`;
+  } else if(t.state==='created'){
+    const pc=t.st==='atrisk'?'#BA7517':'#999';
+    h+=`<div class="b-plan" style="left:${P(t.plan.s)};width:${W(t.plan.e-t.plan.s)};border-color:${pc}"></div>`;
+    if(t.st) h+=`<div class="b-ghost" style="left:${P(t.plan.s)};width:${W(t.plan.e-t.plan.s)};background:${SC[t.st]}"></div>`;
+    h+=`<div class="due-v" style="left:${P(t.due)};background:${t.st==='atrisk'?'#BA7517':'#bbb'}"></div>`;
+  } else {
+    if(t.plan) h+=`<div class="b-plan" style="left:${P(t.plan.s)};width:${W(t.plan.e-t.plan.s)};border-color:#aaa"></div>`;
+    if(t.actual){
+      const col=SC[t.st]||'#378ADD';
+      const end=t.actual.e!==null?t.actual.e:TC+.5;
+      h+=`<div class="b-act" style="left:${P(t.actual.s)};width:${W(end-t.actual.s)};background:${col}"></div>`;
+    }
+    const dc=t.st==='overdue'||t.st==='late'?'#E24B4A':t.st==='atrisk'?'#BA7517':'#bbb';
+    h+=`<div class="due-v" style="left:${P(t.due)};background:${dc}"></div>`;
+  }
+  return h+'</div>';
+}
+
+function renderGanttHeader(label){
+  let h=`<div class="gh"><div class="lc">${label}</div><div class="th">`;
+  WKS.forEach(w=>{h+=`<div class="wc${w.today?' today':''}"><span>${w.l}</span></div>`;});
+  return h+'</div></div>';
+}
+
+// --- BY JOB ---
+function renderJobView(){
+  let h=renderGanttHeader('Project / Job / Task');
+  PROJECTS.forEach(proj=>{
+    h+=`<div class="pr-row"><div class="pr-lc" data-pid="${proj.id}"><span class="pr-tog open" id="ptog-${proj.id}">▶</span><span class="pr-name">${proj.name}</span></div><div class="pr-tc"><div class="tl-now" style="left:${P(TC+.5)}"></div></div></div>`;
+    h+=`<div id="pb-${proj.id}">`;
+    proj.jobs.forEach(job=>{
+      const f=job.milestones[0],la=job.milestones[job.milestones.length-1];
+      h+=`<div class="jr-row"><div class="jr-lc" data-jid="${job.id}"><span class="jr-tog open" id="jtog-${job.id}">▶</span><div><span class="jr-name">${job.name}</span>${job.dateFields?`<div style="font-size:10px;color:var(--muted);margin-top:1px">${job.dateFields}</div>`:''}</div></div><div class="jr-tc"><div class="tl-now" style="left:${P(TC+.5)}"></div><div class="ms-track" style="left:${P(f.col)};width:${W(la.col-f.col)}"></div>`;
+      job.milestones.forEach(ms=>{const s=msS(ms);h+=`<div class="ms-mini" style="left:calc(${P(ms.col)} - 5px);background:${msC(s)}" data-tt="${ms.label}|Planned: ${ms.pd}|Actual: ${ms.ad||'—'}|${msL(s)}"></div>`;});
+      h+=`<div class="jr-status">Status: <b>${job.jstatus}</b></div></div></div>`;
+      h+=`<div id="jb-${job.id}">`;
+      job.milestones.forEach(ms=>{
+        const s=msS(ms);const ac=ms.ad?(ms.col<=TC?'ok':'late'):'';
+        h+=`<div class="ms-row"><div class="ms-lc"><span class="ms-dot" style="background:${msC(s)}"></span><span class="ms-name-t">${ms.label}</span><span class="ms-dates">Plan: ${ms.pd} · <span class="${ac}">Actual: ${ms.ad||'—'}</span></span></div><div class="ms-tc">${ms.even?`<div class="ms-bg" style="left:${P(ms.ss)};width:${W(ms.col-ms.ss)}"></div>`:''}<div class="tl-now" style="left:${P(TC+.5)}"></div>${ms.alert?`<div class="ms-alert">⚠ ${ms.alert}</div>`:''}<div class="ms-dia" style="left:calc(${P(ms.col)} - 6px);background:${msC(s)}" data-tt="${ms.label}|Planned: ${ms.pd}|Actual: ${ms.ad||'—'}|Status: ${msL(s)}${ms.alert?'|⚠ '+ms.alert:''}"></div></div></div>`;
+        ms.tasks.forEach(t=>{
+          const aschip=t.as?`<span class="chip">${t.as}</span>`:`<span class="chip ua">Unassigned</span>`;
+          const missingTag=t.missing?`<span class="chip" style="background:#fde8e8;border-color:#E24B4A;color:#E24B4A;border-style:dashed">⚠ ${
+            t.missing==='both'?'No dates configured':
+            t.missing==='start'?'Start date missing':
+            t.missing==='due'?'Due date missing':
+            t.missing==='start_field'?'Start field empty — using timestamp':''
+          }</span>`:'';
+          h+=`<div class="tk-row"><div class="tk-lc"><span class="tk-name">${t.name}</span><div class="chips">${aschip}${stateChip(t)}${missingTag}</div></div>${renderBarArea(t,ms,'')}</div>`;
+        });
+      });
+      h+='</div>';
+    });
+    h+='</div>';
+  });
+  document.getElementById('gantt').innerHTML=h;
+}
+
+// --- BY ASSIGNEE ---
+let selAssignee=null;
+function buildAsMap(){
+  const map={};
+  PROJECTS.forEach(p=>p.jobs.forEach(j=>j.milestones.forEach(ms=>ms.tasks.forEach(t=>{
+    if(!t.as) return;
+    if(!map[t.as]) map[t.as]=[];
+    map[t.as].push({t,ms,job:j,proj:p});
+  }))));
+  return map;
+}
+function renderAssigneeView(){
+  const map=buildAsMap();
+  const names=Object.keys(map).sort((a,b)=>{
+    const f=x=>map[x].filter(e=>e.t.state!=='done').length;
+    return f(b)-f(a);
+  });
+  if(!selAssignee||!map[selAssignee]) selAssignee=names[0];
+  document.getElementById('sidebar').style.display='';
+  document.getElementById('sb-list').innerHTML=names.map(n=>{
+    const c=map[n].filter(e=>e.t.state!=='done').length;
+    const dimmed=n!==selAssignee;
+    return `<div class="sb-item${n===selAssignee?' on':''}" data-name="${n}" style="${dimmed?'opacity:.35;':''}"><span class="sb-name">${n}</span><span class="sb-count">${c}</span></div>`;
+  }).join('');
+  document.querySelectorAll('.sb-item').forEach(el=>{
+    el.addEventListener('mouseenter',()=>{
+      if(el.dataset.name!==selAssignee) el.style.opacity='0.7';
+    });
+    el.addEventListener('mouseleave',()=>{
+      if(el.dataset.name!==selAssignee) el.style.opacity='0.35';
+    });
+    el.addEventListener('click',()=>{selAssignee=el.dataset.name;renderAssigneeView();});
+  });
+  const entries=map[selAssignee]||[];
+  // density
+  const dc2={};
+  entries.forEach(({t})=>{if(t.state!=='done'){const c=Math.floor(t.due);dc2[c]=(dc2[c]||0)+1;}});
+  const densCols=Object.entries(dc2).filter(([,n])=>n>=2).map(([c])=>+c);
+  let h=renderGanttHeader(`${selAssignee} — tasks by project`);
+  // group by project then job
+  const byP={};
+  entries.forEach(e=>{
+    const pk=e.proj.id;if(!byP[pk]) byP[pk]={proj:e.proj,byJ:{}};
+    const jk=e.job.id;if(!byP[pk].byJ[jk]) byP[pk].byJ[jk]={job:e.job,entries:[]};
+    byP[pk].byJ[jk].entries.push(e);
+  });
+  Object.values(byP).forEach(({proj,byJ})=>{
+    h+=`<div class="pr-row"><div class="pr-lc"><span class="pr-name">${proj.name}</span></div><div class="pr-tc"><div class="tl-now" style="left:${P(TC+.5)}"></div>${densCols.map(c=>`<div style="position:absolute;top:0;bottom:0;left:${P(c)};width:${W(1)};background:var(--bg-warn);opacity:.5"></div>`).join('')}</div></div>`;
+    Object.values(byJ).forEach(({job,entries})=>{
+      h+=`<div class="jr-row"><div class="jr-lc"><span class="jr-name">${job.name}</span><span style="font-size:10px;color:var(--muted);margin-left:6px">${job.jstatus}</span></div><div class="jr-tc"><div class="tl-now" style="left:${P(TC+.5)}"></div>${densCols.map(c=>`<div style="position:absolute;top:0;bottom:0;left:${P(c)};width:${W(1)};background:var(--bg-warn);opacity:.5"></div>`).join('')}</div></div>`;
+      entries.forEach(({t,ms})=>{
+        // show milestone context
+        h+=`<div class="tk-row"><div class="tk-lc"><span class="tk-name">${t.name}</span><span class="tk-ctx">${ms.label} · Plan: ${ms.pd}</span><div class="chips">${stateChip(t)}</div></div>${renderBarArea(t,ms,'-a')}</div>`;
+      });
+    });
+  });
+  document.getElementById('gantt').innerHTML=h;
+  attachBarTT('-a');
+}
+
+// --- MY WORK (engineer view) ---
+function renderMyWork(engineerName){
+  const map=buildAsMap();
+  const entries=(map[engineerName]||[]);
+  let h=renderGanttHeader('Job / Milestone / Task');
+  const byP={};
+  entries.forEach(e=>{
+    const pk=e.proj.id;if(!byP[pk]) byP[pk]={proj:e.proj,byJ:{}};
+    const jk=e.job.id;if(!byP[pk].byJ[jk]) byP[pk].byJ[jk]={job:e.job,entries:[]};
+    byP[pk].byJ[jk].entries.push(e);
+  });
+  if(Object.keys(byP).length===0){h+='<div style="padding:32px;text-align:center;color:var(--muted)">No tasks assigned to you.</div>';}
+  Object.values(byP).forEach(({proj,byJ})=>{
+    h+=`<div class="pr-row"><div class="pr-lc"><span class="pr-name">${proj.name}</span></div><div class="pr-tc"><div class="tl-now" style="left:${P(TC+.5)}"></div></div></div>`;
+    Object.values(byJ).forEach(({job,entries})=>{
+      h+=`<div class="jr-row"><div class="jr-lc"><span class="jr-name">${job.name}</span><span style="font-size:10px;color:var(--muted);margin-left:6px">${job.jstatus}</span></div><div class="jr-tc"><div class="tl-now" style="left:${P(TC+.5)}"></div></div></div>`;
+      entries.forEach(({t,ms})=>{
+        h+=`<div class="tk-row"><div class="tk-lc mywork"><span class="tk-name">${t.name}</span><span class="tk-ctx">${ms.label} · Plan: ${ms.pd}</span><div class="chips">${stateChip(t)}</div></div>${renderBarArea(t,ms,'-mw')}</div>`;
+      });
+    });
+  });
+  document.getElementById('mywork-gantt').innerHTML=h;
+  attachBarTT('-mw');
+}
+
+// --- TOOLTIPS ---
+const ttEl=document.getElementById('tt');
+function showTT(e,str){
+  const pts=str.split('|');
+  let inner=`<div class="ttt">${pts[0]}</div>`;
+  pts.slice(1).forEach(p=>{
+    if(p.startsWith('Will')||p.startsWith('Window')||p.startsWith('⚠')){inner+=`<div class="ttn">${p}</div>`;}
+    else{const ci=p.indexOf(':');inner+=ci>0?`<div class="ttr"><span>${p.slice(0,ci)}</span><span class="ttv">${p.slice(ci+1).trim()}</span></div>`:`<div class="ttr">${p}</div>`;}
+  });
+  ttEl.innerHTML=inner;ttEl.style.display='block';mv(e);
+}
+function mv(e){ttEl.style.left=Math.min(e.clientX+14,window.innerWidth-295)+'px';ttEl.style.top=Math.max(10,e.clientY-10)+'px';}
+function attachBarTT(sfx){
+  allTasks.forEach(t=>{
+    const el=document.getElementById(`bar-${t.id}${sfx||''}`);
+    if(!el)return;
+    el.addEventListener('mouseenter',e=>showTT(e,t.name+'|'+t.tt));
+    el.addEventListener('mousemove',mv);
+    el.addEventListener('mouseleave',()=>ttEl.style.display='none');
+  });
+}
+function attachDiaTT(){
+  document.querySelectorAll('[data-tt]').forEach(el=>{
+    el.addEventListener('mouseenter',e=>showTT(e,el.dataset.tt));
+    el.addEventListener('mousemove',mv);
+    el.addEventListener('mouseleave',()=>ttEl.style.display='none');
+  });
+}
+function attachToggles(){
+  document.querySelectorAll('.pr-lc[data-pid]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      const b=document.getElementById('pb-'+el.dataset.pid);
+      const t=document.getElementById('ptog-'+el.dataset.pid);
+      const open=b.style.display!=='none';
+      b.style.display=open?'none':'';if(t)t.classList.toggle('open',!open);
+    });
+  });
+  document.querySelectorAll('.jr-lc[data-jid]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      const b=document.getElementById('jb-'+el.dataset.jid);
+      const t=document.getElementById('jtog-'+el.dataset.jid);
+      const open=b.style.display!=='none';
+      b.style.display=open?'none':'';if(t)t.classList.toggle('open',!open);
+    });
+  });
+}
+
+let uaFilter=false;
+document.getElementById('ua').addEventListener('click',()=>{
+  uaFilter=!uaFilter;
+  document.querySelectorAll('.tk-row').forEach(r=>{const u=r.querySelector('.chip.ua');r.style.display=uaFilter?(u?'':'none'):'';});
+  document.querySelectorAll('.ms-row').forEach(r=>r.style.display=uaFilter?'none':'');
+  document.getElementById('ual').innerHTML=uaFilter?'<b>Showing unassigned only</b> — click to clear filter':'<b>4 unassigned tasks</b> across 2 jobs · click to filter';
+});
+
+// --- TABS & ROLES ---
+let currentRole='supervisor';
+let currentTab='gantt';
+let ganttMode='job';
+
+function buildTabs(){
+  const tabsDef=currentRole==='supervisor'
+    ?[{id:'summary',label:'Summary'},{id:'gantt',label:'By Job'},{id:'assignee',label:'By Assignee'},{id:'config',label:'Config ⓘ'}]
+    :[{id:'mywork',label:'My Work'}];
+  document.getElementById('tabs').innerHTML=tabsDef.map(t=>`<div class="tab${currentTab===t.id?' on':''}" data-tab="${t.id}">${t.label}</div>`).join('');
+  document.querySelectorAll('.tab').forEach(el=>{
+    el.addEventListener('click',()=>switchTab(el.dataset.tab));
+  });
+}
+
+function showPanels(){
+  document.getElementById('panel-summary').classList.toggle('on',currentTab==='summary');
+  document.getElementById('panel-gantt').classList.toggle('on',currentTab==='gantt'||currentTab==='assignee');
+  document.getElementById('panel-mywork').classList.toggle('on',currentTab==='mywork');
+  document.getElementById('panel-config').classList.toggle('on',currentTab==='config');
+  if(currentTab==='gantt'||currentTab==='assignee'){
+    document.getElementById('mode-job').classList.toggle('on',currentTab==='gantt');
+    document.getElementById('mode-asgn').classList.toggle('on',currentTab==='assignee');
+    // unassigned filter only relevant in By Job view
+    document.getElementById('ua').style.display=currentTab==='gantt'?'':'none';
+    if(currentTab==='gantt'){
+      document.getElementById('sidebar').style.display='none';
+      renderJobView();attachBarTT('');attachDiaTT();attachToggles();
+    } else {
+      renderAssigneeView();attachDiaTT();
+    }
+  }
+  if(currentTab==='mywork') renderMyWork('Assignee A');
+  if(currentTab==='config') renderConfig('inspection');
+}
+
+// ─────────────────────────────────────────────
+// CONFIG DATA
+// ─────────────────────────────────────────────
+const CONFIG={
+  inspection:{
+    label:'Standard Inspection',
+    dateFields:['creation_date','construction_date','inspection_date','close_date'],
+    milestones:[
+      {name:'M1 · Construction', dueField:'construction_date'},
+      {name:'M2 · Inspection',   dueField:'inspection_date'},
+      {name:'M3 · Close',        dueField:'close_date'},
+    ],
+    tasks:[
+      {name:'Site preparation',
+       start:{type:'field',val:'creation_date'},
+       due:{type:'field',val:'construction_date'},
+       completion:{type:'auto'}},
+      {name:'Equipment check',
+       start:{type:'prev'},
+       due:{type:'field',val:'construction_date'},
+       completion:{type:'auto'}},
+      {name:'Field inspection',
+       start:{type:'field',val:'construction_date'},
+       due:{type:'field',val:'inspection_date'},
+       completion:{type:'auto'}},
+      {name:'Inspection sign-off',
+       start:{type:'prev'},
+       due:{type:'field',val:'inspection_date'},
+       completion:{type:'auto'}},
+      {name:'Documentation',
+       start:{type:'field',val:'inspection_date'},
+       due:{type:'field',val:'close_date'},
+       completion:{type:'auto'}},
+    ]
+  },
+  permit:{
+    label:'Permit',
+    dateFields:['creation_date','submission_date','approval_date'],
+    milestones:[
+      {name:'M1 · Submission', dueField:'submission_date'},
+      {name:'M2 · Approval',   dueField:'approval_date'},
+    ],
+    tasks:[
+      {name:'Prepare permit package',
+       start:{type:'field',val:'creation_date'},
+       due:{type:'field',val:'submission_date'},
+       completion:{type:'auto'}},
+      {name:'Internal review',
+       start:{type:'prev'},
+       due:{type:'field',val:'submission_date'},
+       completion:{type:'auto'}},
+      {name:'Agency follow-up',
+       start:{type:'field',val:'submission_date'},
+       due:{type:'field',val:'approval_date'},
+       completion:{type:'auto'}},
+    ]
+  },
+  repair:{
+    label:'Emergency Repair',
+    dateFields:['creation_date','repair_date','close_date'],
+    milestones:[
+      {name:'M1 · Repair', dueField:'repair_date', warn:true},
+      {name:'M2 · Close',  dueField:'close_date'},
+    ],
+    tasks:[
+      {name:'Damage assessment',
+       start:{type:'field',val:'creation_date'},
+       due:{type:'field',val:'repair_date',warn:true},
+       completion:{type:'auto'}},
+      {name:'Repair execution',
+       start:{type:'prev'},
+       due:{type:'field',val:'repair_date',warn:true},
+       completion:{type:'auto'}},
+      {name:'Final inspection',
+       start:{type:'field',val:'repair_date',warn:true},
+       due:{type:'field',val:'close_date'},
+       completion:{type:'auto'}},
+    ]
+  }
+};
+
+function ddPill(src){
+  if(src.type==='field'){
+    const warn=src.warn;
+    return `<span class="cfg-pill${warn?' warn':''}" title="Read-only in this preview">${src.val}${warn?' ⚠':''} <span style="font-size:9px;opacity:.6">▾</span></span>`;
+  }
+  if(src.type==='prev') return `<span class="cfg-pill prev" title="Read-only in this preview">prev task completion <span style="font-size:9px;opacity:.6">▾</span></span>`;
+  if(src.type==='auto') return `<span class="cfg-pill auto">auto (status → completed)</span>`;
+  return '';
+}
+
+function renderConfig(jtype){
+  const cfg=CONFIG[jtype];
+  let h='';
+
+  // milestone config
+  h+=`<div class="cfg-card"><h3>Milestone configuration</h3><div class="cfg-col">`;
+  cfg.milestones.forEach(ms=>{
+    const warn=ms.warn;
+    h+=`<div class="ms-cfg-row">
+      <span class="ms-cfg-name">${ms.name}</span>
+      <span class="ms-cfg-arrow">due date field →</span>
+      <span class="cfg-pill${warn?' warn':''}" title="Read-only in this preview">${ms.dueField}${warn?' ⚠':''} <span style="font-size:9px;opacity:.6">▾</span></span>
+    </div>`;
+  });
+  if(cfg.milestones.some(m=>m.warn)){
+    h+=`<div style="font-size:11px;color:var(--warn-text);margin-top:8px;padding:6px 10px;background:var(--bg-warn);border-radius:6px">⚠ <b>repair_date</b> is not required — if left empty on a job instance, milestone due date will be unset and affected tasks cannot be placed on the timeline.</div>`;
+  }
+  h+=`</div></div>`;
+
+  // task date mapping
+  h+=`<div class="cfg-card"><h3>Task date mapping</h3>`;
+  cfg.tasks.forEach(t=>{
+    h+=`<div class="task-cfg-block">
+      <div class="task-cfg-header">${t.name}</div>
+      <div class="task-cfg-body">
+        <div class="task-cfg-row"><span class="task-cfg-label">Start date</span>${ddPill(t.start)}</div>
+        <div class="task-cfg-row"><span class="task-cfg-label">Due date</span>${ddPill(t.due)}</div>
+        <div class="task-cfg-row"><span class="task-cfg-label">Completion</span>${ddPill(t.completion)}</div>
+      </div>
+    </div>`;
+  });
+  h+=`</div>`;
+
+  // readonly note
+  h+=`<div style="font-size:11px;color:var(--muted);margin-top:4px">
+    <span style="background:var(--bg-accent);color:var(--accent);padding:1px 6px;border-radius:4px;margin-right:6px">field ▾</span>Selectable from job date fields &nbsp;
+    <span style="background:#f1eaff;color:#6b3fa0;padding:1px 6px;border-radius:4px;margin-right:6px">prev task completion ▾</span>Uses previous task's completion timestamp &nbsp;
+    <span style="background:#f0fae8;color:var(--green);padding:1px 6px;border-radius:4px;margin-right:6px">auto</span>System-captured — not configurable
+  </div>`;
+
+  document.getElementById('config-content').innerHTML=h;
+
+  // job type sub-tabs
+  document.querySelectorAll('.cfg-jt').forEach(el=>{
+    el.classList.toggle('on',el.dataset.jtype===jtype);
+    el.onclick=()=>renderConfig(el.dataset.jtype);
+  });
+}
+
+
+function switchTab(tabId){
+  currentTab=tabId;
+  buildTabs();showPanels();
+}
+
+document.getElementById('mode-job').addEventListener('click',()=>switchTab('gantt'));
+document.getElementById('mode-asgn').addEventListener('click',()=>switchTab('assignee'));
+
+document.getElementById('role-sup').addEventListener('click',()=>{
+  currentRole='supervisor';currentTab='gantt';
+  document.getElementById('role-sup').classList.add('on');
+  document.getElementById('role-eng').classList.remove('on');
+  buildTabs();showPanels();
+});
+document.getElementById('role-eng').addEventListener('click',()=>{
+  currentRole='engineer';currentTab='mywork';
+  document.getElementById('role-eng').classList.add('on');
+  document.getElementById('role-sup').classList.remove('on');
+  buildTabs();showPanels();
+});
+
+// summary risk items jump to gantt
+document.querySelectorAll('.risk-item').forEach(el=>{
+  el.addEventListener('click',()=>{
+    switchTab('gantt');
+    setTimeout(()=>{
+      const bar=document.getElementById('bar-'+el.dataset.task);
+      if(bar) bar.scrollIntoView({behavior:'smooth',block:'center'});
+    },120);
+  });
+});
+
+// initial render
+buildTabs();showPanels();
+</script>
+</body>
+</html>
